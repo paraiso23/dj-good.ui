@@ -258,6 +258,21 @@ export default function Home() {
     },
   }
 
+  // Add this useEffect after the other useEffect hooks
+  useEffect(() => {
+    const handleNavigate = (event: CustomEvent) => {
+      const { section } = event.detail
+      if (section) {
+        setActiveSection(section)
+      }
+    }
+
+    document.addEventListener("navigate-to-section", handleNavigate as EventListener)
+    return () => {
+      document.removeEventListener("navigate-to-section", handleNavigate as EventListener)
+    }
+  }, [])
+
   return (
     <main className="flex flex-col min-h-screen bg-background overflow-x-hidden">
       {/* Hidden file input for image uploads */}

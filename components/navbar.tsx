@@ -58,13 +58,13 @@ export default function Navbar({
     },
     {
       id: "cv",
-      label: "CV / Resume",
+      label: "Sets",
       icon: <FileText size={20} />,
       showOnMobile: true,
     },
     {
       id: "projects",
-      label: "Projects",
+      label: "Crate",
       icon: <LayoutGrid size={20} />,
       showOnMobile: true,
     },

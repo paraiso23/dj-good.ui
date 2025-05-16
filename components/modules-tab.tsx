@@ -3,6 +3,7 @@
 import { motion } from "framer-motion"
 import { Bot, Search, Youtube, Plus } from "lucide-react"
 import { useState } from "react"
+import { useSearchHistory, type HistoryEntry } from "../hooks/useSearchHistory"
 
 export default function ModulesTab({
   selectedModule,
@@ -12,24 +13,20 @@ export default function ModulesTab({
   setSelectedModule: (id: string) => void
 }) {
   // Mock data for parsed tracks - in a real app, this would come from a parsing function
-  const [parsedTracks, setParsedTracks] = useState([
-    { title: "Bohemian Rhapsody", artist: "Queen" },
-    { title: "Stairway to Heaven", artist: "Led Zeppelin" },
-    { title: "Hotel California", artist: "Eagles" },
-    { title: "Sweet Child O' Mine", artist: "Guns N' Roses" },
-    { title: "Imagine", artist: "John Lennon" },
-    { title: "Billie Jean", artist: "Michael Jackson" },
-    { title: "Smells Like Teen Spirit", artist: "Nirvana" },
-    { title: "Yesterday", artist: "The Beatles" },
-    { title: "Like a Rolling Stone", artist: "Bob Dylan" },
-    { title: "Purple Haze", artist: "Jimi Hendrix" },
-  ])
+  const [parsedTracks, setParsedTracks] = useState<Array<{ title: string; artist: string }>>([])
 
   // TrackGrabber states
   const [mode, setMode] = useState<"text" | "url" | "file">("text")
   const [inputText, setInputText] = useState("")
   const [inputURL, setInputURL] = useState("")
   const [file, setFile] = useState<File | null>(null)
+
+  // Add these state variables after the other useState declarations
+  const [showHistory, setShowHistory] = useState(false)
+  const { history, addHistory, clearHistory } = useSearchHistory()
+
+  // Search history hook
+  // const { addHistory } = useSearchHistory() // This line is removed because it's already destructured above
 
   // Mock implementation of useWebhook hook
   const useWebhook = () => {
@@ -85,11 +82,15 @@ export default function ModulesTab({
     if (mode === "text") {
       if (!inputText.trim()) return
       responseText = await callWebhook("/api/parseTrack", { text: inputText })
+      // Add to search history
+      addHistory("text", inputText)
     }
 
     if (mode === "url") {
       if (!inputURL.trim()) return
       responseText = await callWebhook("/api/parseTrack", { url: inputURL })
+      // Add to search history
+      addHistory("url", inputURL)
     }
 
     if (mode === "file" && file) {
@@ -97,6 +98,8 @@ export default function ModulesTab({
       const form = new FormData()
       form.append("file", file)
       responseText = await callWebhook("/api/parseTrack", form)
+      // Add to search history
+      addHistory("file", file.name)
     }
 
     // Try to parse the complex nested JSON response
@@ -131,25 +134,19 @@ export default function ModulesTab({
         // Extract tracks from the parsed data
         let tracks = []
 
-        // Try to extract from the expected structure
-        if (Array.isArray(innerData) && innerData.length > 0 && innerData[0].output && innerData[0].output.tracklist) {
-          const tracklist = innerData[0].output.tracklist
-          tracks = tracklist.map((item) => ({
+        // Based on the console log, the tracklist is directly in the innerData object
+        if (innerData && innerData.tracklist && Array.isArray(innerData.tracklist)) {
+          tracks = innerData.tracklist.map((item) => ({
             title: item.track.title,
             artist: item.artist.name,
           }))
-        }
-        // Fallback: try to extract directly if the structure is different
-        else if (typeof innerData === "object" && innerData.tracklist) {
-          const tracklist = innerData.tracklist
-          tracks = tracklist.map((item) => ({
-            title: item.track.title,
-            artist: item.artist.name,
-          }))
+          console.log("Extracted tracks from tracklist:", tracks)
+        } else {
+          console.warn("Could not find tracklist in the response")
         }
 
         if (tracks.length > 0) {
-          console.log("Extracted tracks:", tracks)
+          console.log("Setting parsed tracks:", tracks)
           setParsedTracks(tracks)
         } else {
           console.warn("No tracks found in the response")
@@ -163,32 +160,93 @@ export default function ModulesTab({
     }
   }
 
-  // In a real app, this would come from the TrackContext
+  // Handle selecting an entry from search history
+  const handleSelectHistory = (entry: HistoryEntry) => {
+    setMode(entry.mode)
+    if (entry.mode === "text") setInputText(entry.value)
+    if (entry.mode === "url") setInputURL(entry.value)
+    // For file mode, we can't restore the file object directly
+    // We could show a message to re-upload the file
+  }
+
+  // Update the addTrack function to add the track to the crate
   const addTrack = (track) => {
-    console.log("Adding track:", track)
-    // This is a placeholder for the actual implementation
-    alert(`Added: ${track.title} by ${track.artist}`)
+    console.log("Adding track to crate:", track)
+
+    // Create a track object in the format expected by the crate
+    const crateTrack = {
+      id: Date.now().toString(), // In a real app, this would be a UUID
+      artist: track.artist,
+      title: track.title,
+      owned: false, // Default to "wanted" status
+      format: "vinyl", // Default format
+      metadata: {
+        // Add any additional metadata that might be available
+        album: "",
+        genre: "",
+        year: new Date().getFullYear(), // Current year as default
+        comment: `Added from Track Grabber on ${new Date().toLocaleDateString()}`,
+      },
+    }
+
+    // Dispatch a custom event to add the track to the crate
+    const addToCrateEvent = new CustomEvent("add-to-crate", {
+      detail: { track: crateTrack },
+    })
+    document.dispatchEvent(addToCrateEvent)
+
+    // Show a toast notification
+    const toastEvent = new CustomEvent("show-toast", {
+      detail: {
+        title: "Track Added",
+        description: `"${track.title}" by ${track.artist} added to your crate`,
+        variant: "success",
+      },
+    })
+    document.dispatchEvent(toastEvent)
+  }
+
+  // Function to add all tracks to crate
+  const addAllTracks = () => {
+    if (parsedTracks.length === 0) return
+
+    // Add each track to the crate
+    parsedTracks.forEach((track) => {
+      addTrack(track)
+    })
+
+    // Show a toast notification
+    const toastEvent = new CustomEvent("show-toast", {
+      detail: {
+        title: "Tracks Added",
+        description: `${parsedTracks.length} tracks added to your crate`,
+        variant: "success",
+      },
+    })
+    document.dispatchEvent(toastEvent)
   }
 
   return (
     <div className="bg-chat-bg rounded-xl flex flex-col h-full overflow-hidden">
-      <div className="p-4 flex-shrink-0">
-        <motion.div
-          className="flex items-center justify-between mb-4"
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-        >
-          <h2 className="text-lg font-medium">Modules</h2>
-        </motion.div>
-      </div>
+      {/* Disabled header section
+<div className="p-4 flex-shrink-0">
+  <motion.div
+    className="flex items-center justify-between mb-4"
+    initial={{ opacity: 0, y: -10 }}
+    animate={{ opacity: 1, y: 0 }}
+    transition={{ duration: 0.3 }}
+  >
+    <h2 className="text-lg font-medium">Modules</h2>
+  </motion.div>
+</div>
+*/}
 
       <div className="flex-grow overflow-y-auto scrollbar-hide">
         <div className="p-4 h-full">
           <div className="mb-6 space-y-4">
             <h3 className="text-lg font-medium">Track Grabber</h3>
 
-            {/* Selector de modo */}
+            {/* Mode selector with History button */}
             <div className="flex space-x-2">
               {(["text", "url", "file"] as const).map((m) => (
                 <button
@@ -201,6 +259,54 @@ export default function ModulesTab({
                   {m === "text" ? "Text" : m === "url" ? "URL" : "File"}
                 </button>
               ))}
+
+              {/* History dropdown button */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowHistory(!showHistory)}
+                  className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                    showHistory ? "bg-primary text-white" : "bg-neutral-800 hover:bg-neutral-700"
+                  }`}
+                >
+                  History
+                </button>
+
+                {/* Simple dropdown history */}
+                {showHistory && history.length > 0 && (
+                  <div className="absolute top-full right-0 mt-1 w-64 bg-neutral-800 rounded-lg shadow-lg z-10 p-2 max-h-48 overflow-y-auto scrollbar-hide">
+                    {history.map((entry, i) => (
+                      <button
+                        key={i}
+                        className="w-full text-left p-2 text-xs hover:bg-neutral-700 rounded transition-colors flex items-center"
+                        onClick={() => {
+                          handleSelectHistory(entry)
+                          setShowHistory(false)
+                        }}
+                      >
+                        <span className="truncate flex-1">
+                          {entry.mode === "text"
+                            ? entry.value.slice(0, 20) + (entry.value.length > 20 ? "..." : "")
+                            : entry.value}
+                        </span>
+                        <span className="text-neutral-500 text-[10px] ml-2">
+                          {new Date(entry.timestamp).toLocaleDateString()}
+                        </span>
+                      </button>
+                    ))}
+                    <div className="border-t border-neutral-700 mt-1 pt-1">
+                      <button
+                        className="w-full text-center text-xs text-neutral-500 hover:text-white p-1"
+                        onClick={() => {
+                          clearHistory()
+                          setShowHistory(false)
+                        }}
+                      >
+                        Clear History
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Input según modo */}
@@ -233,6 +339,9 @@ export default function ModulesTab({
               </div>
             )}
 
+            {/* Search History Component */}
+            {/* <SearchHistory onSelect={handleSelectHistory} /> */}
+
             {/* Botón de parse */}
             <button
               onClick={handleParse}
@@ -248,16 +357,22 @@ export default function ModulesTab({
               <button
                 className="px-3 py-1 text-xs rounded-full bg-primary text-white hover:bg-primary/90 transition-colors"
                 onClick={() => {
-                  // Add all tracks functionality
-                  const tracks = parsedTracks.map((track) => ({ ...track }))
-                  tracks.forEach((track) => addTrack(track))
+                  addAllTracks()
+                  // Dispatch a custom event to navigate to the crate section
+                  document.dispatchEvent(
+                    new CustomEvent("navigate-to-section", {
+                      detail: { section: "projects" },
+                    }),
+                  )
                 }}
+                disabled={parsedTracks.length === 0}
               >
-                Add All
+                Add All to Crate
               </button>
               <button
                 className="px-3 py-1 text-xs rounded-full bg-neutral-800 hover:bg-neutral-700 transition-colors"
                 onClick={() => setParsedTracks([])}
+                disabled={parsedTracks.length === 0}
               >
                 Clear
               </button>
@@ -289,13 +404,21 @@ export default function ModulesTab({
                     <th className="text-right py-2 px-3 text-sm font-medium text-neutral-400">Actions</th>
                   </tr>
                 </thead>
-                <tbody>
+                <motion.tbody
+                  initial="hidden"
+                  animate="visible"
+                  variants={{
+                    hidden: {},
+                    visible: { transition: { staggerChildren: 0.05 } },
+                  }}
+                >
                   {parsedTracks.map((track, index) => (
                     <motion.tr
                       key={index}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.3, delay: index * 0.05 }}
+                      variants={{
+                        hidden: { opacity: 0, y: 20 },
+                        visible: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 80, damping: 12 } },
+                      }}
                       className="border-t border-neutral-800"
                     >
                       <td className="py-3 px-3 text-sm">{track.title}</td>
@@ -322,8 +445,16 @@ export default function ModulesTab({
                           </a>
                           <button
                             className="p-1.5 rounded-full bg-primary text-white hover:bg-primary/90 transition-colors"
-                            onClick={() => addTrack(track)}
-                            title="Add Track"
+                            onClick={() => {
+                              addTrack(track)
+                              // Dispatch a custom event to navigate to the crate section
+                              document.dispatchEvent(
+                                new CustomEvent("navigate-to-section", {
+                                  detail: { section: "projects" },
+                                }),
+                              )
+                            }}
+                            title="Add to Crate"
                           >
                             <Plus size={16} />
                           </button>
@@ -331,7 +462,7 @@ export default function ModulesTab({
                       </td>
                     </motion.tr>
                   ))}
-                </tbody>
+                </motion.tbody>
               </table>
             </div>
           )}

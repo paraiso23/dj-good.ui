@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
-import { Send, Bot, Info, HelpCircle, Code, Calendar } from "lucide-react"
+import { Send, Bot } from "lucide-react"
 import { AnimatePresence, motion } from "framer-motion"
 
 interface Message {
@@ -27,6 +27,7 @@ export default function ChatInterface({
   const [input, setInput] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [webhookArtists, setWebhookArtists] = useState<Array<{ name: string; id: string }>>([])
 
   const moduleInfo = {
     assistant: {
@@ -109,6 +110,31 @@ export default function ChatInterface({
     }
   }, [isMobile])
 
+  // Listen for webhook responses to extract artists
+  useEffect(() => {
+    const handleWebhookResponse = (event: any) => {
+      const response = event.detail
+
+      // Extract artists from webhook response
+      if (response && response.data && response.data.tracklist) {
+        // Get unique artists from tracklist
+        const uniqueArtists = Array.from(new Set(response.data.tracklist.map((item) => item.artist.name))).map(
+          (name) => ({
+            name,
+            id: name.toLowerCase().replace(/\s+/g, "-"),
+          }),
+        )
+
+        setWebhookArtists(uniqueArtists)
+      }
+    }
+
+    document.addEventListener("webhook-response", handleWebhookResponse)
+    return () => {
+      document.removeEventListener("webhook-response", handleWebhookResponse)
+    }
+  }, [])
+
   return (
     <div className="bg-chat-bg rounded-xl flex flex-col h-full w-full max-w-full overflow-hidden">
       <div className="p-4 md:p-6 flex-shrink-0">
@@ -132,17 +158,22 @@ export default function ChatInterface({
           </motion.div>
         </AnimatePresence>
 
-        {/* Command suggestions */}
+        {/* Artist suggestions from webhook response */}
         <div className="flex flex-wrap gap-2 mb-4">
-          {["/help", "/about", "/time", "/date", "/weather"].map((cmd) => (
-            <button
-              key={cmd}
-              className="px-3 py-1 text-xs rounded-full bg-neutral-800 hover:bg-neutral-700 transition-colors"
-              onClick={() => setInput(cmd)}
-            >
-              {cmd}
-            </button>
-          ))}
+          {webhookArtists.length > 0
+            ? webhookArtists.map((artist) => (
+                <motion.button
+                  key={artist.id}
+                  className="px-3 py-1 text-xs rounded-full bg-neutral-800 hover:bg-neutral-700 transition-colors"
+                  onClick={() => setInput(`Tell me about ${artist.name}`)}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  {artist.name}
+                </motion.button>
+              ))
+            : null}
         </div>
       </div>
 
@@ -163,20 +194,16 @@ export default function ChatInterface({
 
               <div className="mt-6 grid grid-cols-2 gap-3">
                 <div className="p-3 bg-neutral-800 rounded-lg flex items-center">
-                  <HelpCircle size={18} className="mr-2 text-primary" />
-                  <span className="text-sm">Type /help for commands</span>
+                  <span className="text-sm">Which artists is ____ related to?</span>
                 </div>
                 <div className="p-3 bg-neutral-800 rounded-lg flex items-center">
-                  <Info size={18} className="mr-2 text-primary" />
-                  <span className="text-sm">Type /about for info</span>
+                  <span className="text-sm">Which labels is ____ related to?</span>
                 </div>
                 <div className="p-3 bg-neutral-800 rounded-lg flex items-center">
-                  <Code size={18} className="mr-2 text-primary" />
-                  <span className="text-sm">More features coming soon</span>
+                  <span className="text-sm">Find more info related to _____</span>
                 </div>
                 <div className="p-3 bg-neutral-800 rounded-lg flex items-center">
-                  <Calendar size={18} className="mr-2 text-primary" />
-                  <span className="text-sm">Try /date or /time</span>
+                  <span className="text-sm">The ________</span>
                 </div>
               </div>
             </motion.div>
