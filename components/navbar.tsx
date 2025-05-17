@@ -57,15 +57,15 @@ export default function Navbar({
       showOnMobile: true,
     },
     {
-      id: "cv",
-      label: "Sets",
-      icon: <FileText size={20} />,
-      showOnMobile: true,
-    },
-    {
       id: "projects",
       label: "Crate",
       icon: <LayoutGrid size={20} />,
+      showOnMobile: true,
+    },
+    {
+      id: "cv",
+      label: "Sets",
+      icon: <FileText size={20} />,
       showOnMobile: true,
     },
   ]

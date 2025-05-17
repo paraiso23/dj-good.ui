@@ -1,9 +1,12 @@
 "use client"
 
+import type React from "react"
+
 import { motion } from "framer-motion"
 import { Bot, Search, Youtube, Plus } from "lucide-react"
 import { useState } from "react"
 import { useSearchHistory, type HistoryEntry } from "../hooks/useSearchHistory"
+import { v4 as uuidv4 } from "uuid"
 
 export default function ModulesTab({
   selectedModule,
@@ -16,17 +19,16 @@ export default function ModulesTab({
   const [parsedTracks, setParsedTracks] = useState<Array<{ title: string; artist: string }>>([])
 
   // TrackGrabber states
-  const [mode, setMode] = useState<"text" | "url" | "file">("text")
+  const [mode, setMode] = useState<"image" | "text" | "url" | "file">("image")
   const [inputText, setInputText] = useState("")
   const [inputURL, setInputURL] = useState("")
   const [file, setFile] = useState<File | null>(null)
+  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
 
   // Add these state variables after the other useState declarations
   const [showHistory, setShowHistory] = useState(false)
   const { history, addHistory, clearHistory } = useSearchHistory()
-
-  // Search history hook
-  // const { addHistory } = useSearchHistory() // This line is removed because it's already destructured above
 
   // Mock implementation of useWebhook hook
   const useWebhook = () => {
@@ -57,10 +59,32 @@ export default function ModulesTab({
           throw new Error(`HTTP error! Status: ${res.status}`)
         }
 
-        const text = await res.text()
-        setResponse(text)
+        // Check content type to determine how to handle the response
+        const contentType = res.headers.get("content-type") || ""
+        let responseData
+
+        if (contentType.includes("application/json")) {
+          try {
+            // If it's JSON, parse it directly
+            responseData = await res.json()
+            // Convert back to string for consistency with the rest of the code
+            const text = JSON.stringify(responseData)
+            setResponse(text)
+            console.log("Webhook responded successfully with JSON")
+            return text
+          } catch (error) {
+            console.error("Error parsing JSON response:", error)
+            // Fall back to text response
+            responseData = await res.text()
+          }
+        } else {
+          // Handle as text for other content types
+          responseData = await res.text()
+        }
+
+        setResponse(responseData)
         console.log("Webhook responded successfully")
-        return text
+        return responseData
       } catch (err: any) {
         console.error(`Webhook error: ${err.message}`)
         return ""
@@ -78,6 +102,16 @@ export default function ModulesTab({
   // Function for parsing tracks
   const handleParse = async () => {
     let responseText = ""
+
+    // Add this at the beginning of the handleParse function
+    if (mode === "image" && imageFile) {
+      // Send FormData with the image file
+      const form = new FormData()
+      form.append("image", imageFile)
+      responseText = await callWebhook("/api/parseTrack", form)
+      // Add to search history
+      addHistory("image", imageFile.name)
+    }
 
     if (mode === "text") {
       if (!inputText.trim()) return
@@ -104,9 +138,42 @@ export default function ModulesTab({
 
     // Try to parse the complex nested JSON response
     try {
-      // Parse the initial JSON response
+      // Check if response is empty or invalid
+      if (!responseText || responseText.trim() === "") {
+        console.error("Empty response received from webhook")
+        // Show error toast
+        const errorToast = new CustomEvent("show-toast", {
+          detail: {
+            title: "Parsing Error",
+            description: "Received empty response from server",
+            variant: "error",
+          },
+        })
+        document.dispatchEvent(errorToast)
+        return
+      }
+
       console.log("Raw response:", responseText)
-      const outerData = JSON.parse(responseText)
+
+      // Try to parse the JSON with better error handling
+      let outerData
+      try {
+        outerData = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error("JSON parse error:", parseError)
+        console.log("Invalid JSON response:", responseText)
+        // Show error toast
+        const errorToast = new CustomEvent("show-toast", {
+          detail: {
+            title: "Parsing Error",
+            description: "Could not parse server response",
+            variant: "error",
+          },
+        })
+        document.dispatchEvent(errorToast)
+        return
+      }
+
       console.log("Parsed outer data:", outerData)
 
       if (Array.isArray(outerData) && outerData.length > 0 && outerData[0].output) {
@@ -169,24 +236,73 @@ export default function ModulesTab({
     // We could show a message to re-upload the file
   }
 
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isDragging) {
+      setIsDragging(true)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0]
+      if (file.type.startsWith("image/")) {
+        setImageFile(file)
+        // Show preview
+      } else {
+        // Show error toast
+        const errorToast = new CustomEvent("show-toast", {
+          detail: {
+            title: "Invalid File",
+            description: "Please upload an image file",
+            variant: "error",
+          },
+        })
+        document.dispatchEvent(errorToast)
+      }
+    }
+  }
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setImageFile(e.target.files[0])
+    }
+  }
+
   // Update the addTrack function to add the track to the crate
   const addTrack = (track) => {
     console.log("Adding track to crate:", track)
+    const timestamp = Date.now()
 
-    // Create a track object in the format expected by the crate
+    // Create a track object in the format expected by the crate and Supabase
     const crateTrack = {
-      id: Date.now().toString(), // In a real app, this would be a UUID
-      artist: track.artist,
-      title: track.title,
-      owned: false, // Default to "wanted" status
-      format: "vinyl", // Default format
-      metadata: {
-        // Add any additional metadata that might be available
-        album: "",
-        genre: "",
-        year: new Date().getFullYear(), // Current year as default
-        comment: `Added from Track Grabber on ${new Date().toLocaleDateString()}`,
-      },
+      id: uuidv4(), // Generate a UUID for the track
+      slug: `${track.title.toLowerCase().replace(/\s+/g, "-")}-${timestamp}-${Math.floor(Math.random() * 1000)}`,
+      title: track.title || "",
+      artist: track.artist || "",
+      owned_status: "wanted", // Default to "wanted" status
+      format: "vinyl", // Default format - using a valid format from our constraint
+      album: "",
+      release_year: new Date().getFullYear(), // Current year as default
+      comments: `Added from Track Grabber on ${new Date().toLocaleDateString()}`,
+      added_at: new Date().toISOString().split("T")[0],
     }
 
     // Dispatch a custom event to add the track to the crate
@@ -219,7 +335,7 @@ export default function ModulesTab({
     const toastEvent = new CustomEvent("show-toast", {
       detail: {
         title: "Tracks Added",
-        description: `${parsedTracks.length} tracks added to your crate`,
+        description: `${parsedTracks.length} tracks added to your crate and synced to cloud`,
         variant: "success",
       },
     })
@@ -248,7 +364,7 @@ export default function ModulesTab({
 
             {/* Mode selector with History button */}
             <div className="flex space-x-2">
-              {(["text", "url", "file"] as const).map((m) => (
+              {(["image", "text", "url", "file"] as const).map((m) => (
                 <button
                   key={m}
                   onClick={() => setMode(m)}
@@ -256,7 +372,7 @@ export default function ModulesTab({
                     mode === m ? "bg-primary text-white" : "bg-neutral-800 hover:bg-neutral-700"
                   }`}
                 >
-                  {m === "text" ? "Text" : m === "url" ? "URL" : "File"}
+                  {m === "text" ? "Text" : m === "url" ? "URL" : m === "file" ? "File" : "Image"}
                 </button>
               ))}
 
@@ -328,6 +444,76 @@ export default function ModulesTab({
                 onChange={(e) => setInputURL(e.target.value)}
               />
             )}
+            {mode === "image" && (
+              <div
+                className={`w-full p-6 bg-neutral-800 border-2 border-dashed ${
+                  isDragging ? "border-primary bg-neutral-700/30" : "border-neutral-700"
+                } rounded-lg transition-colors flex flex-col items-center justify-center cursor-pointer`}
+                onDragEnter={handleDragEnter}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => document.getElementById("imageInput")?.click()}
+              >
+                <input id="imageInput" type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
+
+                {imageFile ? (
+                  <div className="flex flex-col items-center">
+                    <div className="w-32 h-32 mb-3 relative">
+                      <img
+                        src={URL.createObjectURL(imageFile) || "/placeholder.svg"}
+                        alt="Track image"
+                        className="w-full h-full object-cover rounded-lg"
+                      />
+                      <button
+                        className="absolute -top-2 -right-2 bg-neutral-900 rounded-full p-1 hover:bg-red-500 transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setImageFile(null)
+                        }}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <line x1="18" y1="6" x2="6" y2="18"></line>
+                          <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                      </button>
+                    </div>
+                    <span className="text-sm text-neutral-300">{imageFile.name}</span>
+                  </div>
+                ) : (
+                  <>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="40"
+                      height="40"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="text-neutral-400 mb-3"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                      <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                      <polyline points="21 15 16 10 5 21"></polyline>
+                    </svg>
+                    <p className="text-neutral-300 text-center mb-1">Drag & drop an image here</p>
+                    <p className="text-neutral-500 text-xs text-center">or click to browse</p>
+                  </>
+                )}
+              </div>
+            )}
             {mode === "file" && (
               <div className="w-full p-3 bg-neutral-800 border border-neutral-700 rounded-lg">
                 <input
@@ -338,9 +524,6 @@ export default function ModulesTab({
                 />
               </div>
             )}
-
-            {/* Search History Component */}
-            {/* <SearchHistory onSelect={handleSelectHistory} /> */}
 
             {/* Botón de parse */}
             <button
@@ -399,8 +582,8 @@ export default function ModulesTab({
               <table className="w-full border-collapse">
                 <thead className="sticky top-0 bg-chat-bg">
                   <tr>
-                    <th className="text-left py-2 px-3 text-sm font-medium text-neutral-400">Title</th>
                     <th className="text-left py-2 px-3 text-sm font-medium text-neutral-400">Artist</th>
+                    <th className="text-left py-2 px-3 text-sm font-medium text-neutral-400">Title</th>
                     <th className="text-right py-2 px-3 text-sm font-medium text-neutral-400">Actions</th>
                   </tr>
                 </thead>
@@ -421,8 +604,8 @@ export default function ModulesTab({
                       }}
                       className="border-t border-neutral-800"
                     >
-                      <td className="py-3 px-3 text-sm">{track.title}</td>
                       <td className="py-3 px-3 text-sm text-neutral-400">{track.artist}</td>
+                      <td className="py-3 px-3 text-sm">{track.title}</td>
                       <td className="py-3 px-3 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <a

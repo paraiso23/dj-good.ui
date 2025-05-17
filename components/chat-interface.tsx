@@ -1,6 +1,7 @@
 "use client"
 
 import type React from "react"
+import ReactMarkdown from "react-markdown"
 
 import { useState, useRef, useEffect } from "react"
 import { Send, Bot } from "lucide-react"
@@ -11,6 +12,7 @@ interface Message {
   text: string
   sender: "user" | "assistant"
   timestamp: Date
+  isTyping?: boolean
 }
 
 export default function ChatInterface({
@@ -40,7 +42,7 @@ export default function ChatInterface({
 
   const currentModule = moduleInfo["assistant"]
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (input.trim() === "") return
 
     // Add user message
@@ -55,40 +57,155 @@ export default function ChatInterface({
     setMessages(updatedMessages)
     setInput("")
 
-    // Process commands
-    const command = input.trim().toLowerCase()
-    let responseText = ""
-
-    if (command === "/help") {
-      responseText =
-        "Available commands:\n/help - Show this help message\n/about - About this assistant\n/time - Show current time\n/date - Show current date\n/weather - Show weather (demo)"
-    } else if (command === "/about") {
-      responseText = "This is a test version of the chat assistant. More features coming soon!"
-    } else if (command === "/time") {
-      const now = new Date()
-      responseText = `Current time: ${now.toLocaleTimeString()}`
-    } else if (command === "/date") {
-      const now = new Date()
-      responseText = `Current date: ${now.toLocaleDateString()}`
-    } else if (command === "/weather") {
-      responseText = "Weather feature is coming soon. This is just a demo response."
-    } else if (command.startsWith("/")) {
-      responseText = `Unknown command: ${command}. Type /help to see available commands.`
-    } else {
-      responseText =
-        "This is a test version with limited functionality. Please try using one of the available commands by typing /help"
-    }
-
-    // Add assistant response
-    setTimeout(() => {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: responseText,
+    // Show typing indicator
+    const typingIndicatorId = `typing-${Date.now()}`
+    setMessages([
+      ...updatedMessages,
+      {
+        id: typingIndicatorId,
+        text: "...",
         sender: "assistant",
         timestamp: new Date(),
+        isTyping: true,
+      },
+    ])
+
+    try {
+      // Send message to webhook using the same configuration as djbot2
+      const webhookUrl = "https://primary-production-24fb.up.railway.app/webhook/djbot3"
+      console.log("Calling webhook:", webhookUrl, "with payload:", { text: input.trim() })
+
+      // Use the same headers configuration as djbot2
+      const headers: HeadersInit = {}
+      if (input.trim()) {
+        headers["Content-Type"] = "application/json"
       }
-      setMessages([...updatedMessages, assistantMessage])
-    }, 500)
+
+      // Add a timeout for the fetch request
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 60000) // 60 second timeout
+
+      try {
+        // Make the fetch request with the same structure as djbot2
+        const response = await fetch(webhookUrl, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ text: input.trim() }),
+          signal: controller.signal,
+        })
+
+        // Clear the timeout
+        clearTimeout(timeoutId)
+
+        if (!response.ok) {
+          console.error(`HTTP error! Status: ${response.status}, StatusText: ${response.statusText}`)
+          throw new Error(`HTTP error! Status: ${response.status}`)
+        }
+
+        // Check content type to determine how to handle the response (same as djbot2)
+        const contentType = response.headers.get("content-type") || ""
+        console.log("Response content type:", contentType)
+
+        let responseText
+
+        if (contentType.includes("application/json")) {
+          try {
+            // If it's JSON, parse it directly (same as djbot2)
+            const responseData = await response.json()
+            console.log("Webhook JSON response:", responseData)
+
+            // Try to extract the text from various possible response formats
+            if (responseData.output) {
+              responseText = responseData.output
+            } else if (responseData.response) {
+              responseText = responseData.response
+            } else if (responseData.message) {
+              responseText = responseData.message
+            } else if (typeof responseData === "string") {
+              responseText = responseData
+            } else {
+              responseText = JSON.stringify(responseData)
+            }
+          } catch (error) {
+            console.error("Error parsing JSON response:", error)
+            // Fall back to text response
+            responseText = await response.text()
+            console.log("Fallback text response:", responseText)
+          }
+        } else {
+          // Handle as text for other content types
+          responseText = await response.text()
+          console.log("Text response:", responseText)
+        }
+
+        // Remove typing indicator and add assistant response
+        setMessages((prev) =>
+          prev
+            .filter((msg) => msg.id !== typingIndicatorId)
+            .concat({
+              id: (Date.now() + 1).toString(),
+              text: responseText || "I received your message but couldn't generate a response.",
+              sender: "assistant",
+              timestamp: new Date(),
+            }),
+        )
+      } catch (fetchError) {
+        // This catches network errors, timeouts, and aborts
+        console.error("Fetch error:", fetchError)
+        throw fetchError
+      }
+    } catch (error) {
+      console.error("Error sending message to webhook:", error)
+
+      // Provide a more specific error message based on the error type
+      let errorMessage = "Sorry, I couldn't process your request. Please try again later."
+
+      if (error instanceof TypeError && error.message.includes("Failed to fetch")) {
+        errorMessage =
+          "Network error: Could not connect to the assistant service. Please check your internet connection and try again."
+      } else if (error.name === "AbortError") {
+        errorMessage = "Request timed out. The assistant service is taking too long to respond. Please try again later."
+      } else if (error instanceof Error && error.message.includes("HTTP error")) {
+        errorMessage = "The assistant service returned an error. Please try again later."
+      }
+
+      // Get a fallback response based on the user's query
+      const fallbackResponse = getFallbackResponse(input.trim())
+
+      // Remove typing indicator and add error message with fallback
+      setMessages((prev) =>
+        prev
+          .filter((msg) => msg.id !== typingIndicatorId)
+          .concat({
+            id: (Date.now() + 1).toString(),
+            text: `${errorMessage}\n\n${fallbackResponse}`,
+            sender: "assistant",
+            timestamp: new Date(),
+          }),
+      )
+    }
+  }
+
+  // Add this function after the handleSend function
+  const getFallbackResponse = (query: string): string => {
+    // Simple fallback responses for common queries
+    if (query.toLowerCase().includes("hello") || query.toLowerCase().includes("hi")) {
+      return "Hello! I'm currently having trouble connecting to my backend services, but I'm here to help with basic responses."
+    }
+
+    if (query.toLowerCase().includes("help")) {
+      return "I can normally help with various tasks, but I'm currently in offline mode due to connection issues. Try again later for full functionality."
+    }
+
+    if (query.toLowerCase().includes("time")) {
+      return `The current time is ${new Date().toLocaleTimeString()}.`
+    }
+
+    if (query.toLowerCase().includes("date")) {
+      return `Today's date is ${new Date().toLocaleDateString()}.`
+    }
+
+    return "I'm having trouble connecting to my backend services right now. Please try again later."
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -223,7 +340,26 @@ export default function ChatInterface({
                       : "bg-neutral-800 text-white rounded-tl-none"
                   }`}
                 >
-                  <p className="break-words whitespace-pre-line">{message.text}</p>
+                  {message.isTyping ? (
+                    <div className="flex space-x-2 items-center h-6">
+                      <div
+                        className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce"
+                        style={{ animationDelay: "0ms" }}
+                      ></div>
+                      <div
+                        className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce"
+                        style={{ animationDelay: "150ms" }}
+                      ></div>
+                      <div
+                        className="w-2 h-2 bg-neutral-400 rounded-full animate-bounce"
+                        style={{ animationDelay: "300ms" }}
+                      ></div>
+                    </div>
+                  ) : (
+                    <ReactMarkdown className="break-words prose prose-invert prose-sm max-w-none">
+                      {message.text}
+                    </ReactMarkdown>
+                  )}
                   <div className="text-xs text-neutral-400 mt-1 text-right">
                     {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </div>
@@ -244,8 +380,9 @@ export default function ChatInterface({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type a message or command (try /help)..."
-            className="w-full py-3 pl-4 pr-12 bg-neutral-800 border border-neutral-700 rounded-full focus:outline-none focus:ring-1 focus:ring-neutral-600"
+            placeholder="Send a message to the AI assistant..."
+            className="w-full py-3 pl-4 pr-12 bg-neutral-800 border border-neutral-700 rounded-full focus:outline-none focus:ring-1 focus:ring-neutral-600 focus:border-primary transition-colors"
+            disabled={messages.some((m) => m.isTyping)}
           />
           <button
             onClick={handleSend}

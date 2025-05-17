@@ -29,6 +29,12 @@ interface Activity {
   type: "task" | "project" | "note" | "other"
 }
 
+interface Todo {
+  id: string
+  text: string
+  completed: boolean
+}
+
 export default function Home() {
   const [activeSection, setActiveSection] = useState("chat")
   const [messages, setMessages] = useState<Message[]>([])
@@ -67,12 +73,77 @@ export default function Home() {
     },
   ])
 
+  // Todo app state
+  const [todos, setTodos] = useState<Array<{ id: string; text: string; completed: boolean }>>([
+    { id: "1", text: "Update portfolio", completed: false },
+    { id: "2", text: "Research AI frameworks", completed: true },
+    { id: "3", text: "Schedule team meeting", completed: false },
+  ])
+  const [newTodo, setNewTodo] = useState("")
+
+  // Todo app functions
+  const handleAddTodo = () => {
+    if (!newTodo.trim()) return
+
+    const todo = {
+      id: Date.now().toString(),
+      text: newTodo.trim(),
+      completed: false,
+    }
+
+    setTodos([...todos, todo])
+    setNewTodo("")
+
+    // Add to activities
+    const activity = {
+      id: Date.now().toString(),
+      description: `Added todo: ${newTodo.trim()}`,
+      timestamp: new Date(),
+      type: "task",
+    }
+
+    setActivities([activity, ...activities])
+  }
+
+  const handleToggleTodo = (id: string) => {
+    setTodos(todos.map((todo) => (todo.id === id ? { ...todo, completed: !todo.completed } : todo)))
+
+    const todo = todos.find((t) => t.id === id)
+    if (todo) {
+      // Add to activities
+      const activity = {
+        id: Date.now().toString(),
+        description: `${todo.completed ? "Reopened" : "Completed"} todo: ${todo.text}`,
+        timestamp: new Date(),
+        type: "task",
+      }
+
+      setActivities([activity, ...activities])
+    }
+  }
+
+  const handleDeleteTodo = (id: string) => {
+    const todo = todos.find((t) => t.id === id)
+    setTodos(todos.filter((todo) => todo.id !== id))
+
+    if (todo) {
+      // Add to activities
+      const activity = {
+        id: Date.now().toString(),
+        description: `Deleted todo: ${todo.text}`,
+        timestamp: new Date(),
+        type: "task",
+      }
+
+      setActivities([activity, ...activities])
+    }
+  }
+
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [todoApiUrl, setTodoApiUrl] = useState("")
   const { isDarkMode, toggleTheme } = useTheme()
 
-  // Check if the device is mobile
   useEffect(() => {
     const checkIsMobile = () => {
       setIsMobile(window.innerWidth < 768)
@@ -495,6 +566,96 @@ export default function Home() {
                             <span className="text-sm text-green-500">{completedProjects}</span>
                           )}
                         </div>
+                      </div>
+                    </div>
+
+                    {/* Todo App */}
+                    <div className="p-3 bg-neutral-800 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-medium">Todo List</h4>
+                        <span className="text-xs text-neutral-400">
+                          {todos.filter((t) => !t.completed).length} remaining
+                        </span>
+                      </div>
+
+                      <div className="flex mb-3">
+                        <input
+                          type="text"
+                          value={newTodo}
+                          onChange={(e) => setNewTodo(e.target.value)}
+                          placeholder="Add a new task..."
+                          className="flex-1 text-sm bg-neutral-700 border border-neutral-600 rounded-l px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary"
+                          onKeyDown={(e) => e.key === "Enter" && handleAddTodo()}
+                        />
+                        <button
+                          onClick={handleAddTodo}
+                          disabled={!newTodo.trim()}
+                          className="bg-primary text-white px-3 py-1.5 rounded-r text-sm font-medium disabled:opacity-50"
+                        >
+                          Add
+                        </button>
+                      </div>
+
+                      <div className="max-h-40 overflow-y-auto scrollbar-hide space-y-2">
+                        {todos.length === 0 ? (
+                          <div className="text-center py-2 text-sm text-neutral-500">No tasks yet</div>
+                        ) : (
+                          todos.map((todo) => (
+                            <div key={todo.id} className="flex items-center justify-between group">
+                              <div className="flex items-center flex-1">
+                                <button
+                                  onClick={() => handleToggleTodo(todo.id)}
+                                  className={`w-4 h-4 rounded border flex-shrink-0 mr-2 flex items-center justify-center ${
+                                    todo.completed ? "bg-primary border-primary" : "border-neutral-600"
+                                  }`}
+                                >
+                                  {todo.completed && (
+                                    <svg
+                                      width="10"
+                                      height="10"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      xmlns="http://www.w3.org/2000/svg"
+                                    >
+                                      <path
+                                        d="M5 12L10 17L20 7"
+                                        stroke="white"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                    </svg>
+                                  )}
+                                </button>
+                                <span
+                                  className={`text-sm ${todo.completed ? "line-through text-neutral-500" : "text-neutral-200"}`}
+                                >
+                                  {todo.text}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => handleDeleteTodo(todo.id)}
+                                className="text-neutral-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <svg
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                >
+                                  <path
+                                    d="M18 6L6 18M6 6L18 18"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </svg>
+                              </button>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
 
