@@ -356,7 +356,22 @@ export default function ChatInterface({
                       ></div>
                     </div>
                   ) : (
-                    <ReactMarkdown className="break-words prose prose-invert prose-sm max-w-none">
+                    <ReactMarkdown
+                      className="break-words prose prose-invert prose-sm max-w-none"
+                      components={{
+                        a: ({ node, ...props }) => (
+                          <a
+                            {...props}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                            }}
+                          />
+                        ),
+                      }}
+                    >
                       {message.text}
                     </ReactMarkdown>
                   )}
